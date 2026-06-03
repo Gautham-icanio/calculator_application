@@ -30,7 +30,6 @@ pipeline {
                 sh '''
                     echo "--- Files in workspace ---"
                     ls -la
-                    echo ""
                     echo "--- Checking Dockerfile ---"
                     test -f Dockerfile && echo "✅ Dockerfile found" || (echo "❌ Dockerfile missing" && exit 1)
                     echo "--- Checking index.html ---"
@@ -53,38 +52,46 @@ pipeline {
             }
         }
 
-        // ─── 4. TEST (random port — no conflicts) ───────────────────────
+        // ─── 4. TEST ────────────────────────────────────────────────────
+        // NOTE: Jenkins runs inside Docker, so we put the test container on
+        // a shared network and curl it by container name — no port mapping needed.
         stage('Test') {
             steps {
                 echo '🧪 Running container smoke test...'
                 sh """
-                    # Remove any leftover test container from a previous failed run
+                    # Clean up any leftover test container
                     docker rm -f test-calc-${BUILD_NUMBER} 2>/dev/null || true
 
-                    # -P lets Docker pick a free ephemeral port — never conflicts
-                    docker run -d --name test-calc-${BUILD_NUMBER} \\
-                        -P \\
+                    # Create a dedicated test network
+                    docker network create test-net-${BUILD_NUMBER} 2>/dev/null || true
+
+                    # Start the test container on that network (no port binding needed)
+                    docker run -d \\
+                        --name test-calc-${BUILD_NUMBER} \\
+                        --network test-net-${BUILD_NUMBER} \\
                         ${IMAGE_NAME}:${IMAGE_TAG}
 
-                    # Discover which host port was assigned to container port 80
-                    TEST_PORT=\$(docker inspect \\
-                        --format='{{(index (index .NetworkSettings.Ports "80/tcp") 0).HostPort}}' \\
-                        test-calc-${BUILD_NUMBER})
-                    echo "Test container listening on host port: \$TEST_PORT"
+                    # Also connect the Jenkins container to the same network
+                    JENKINS_CONTAINER=\$(hostname)
+                    docker network connect test-net-${BUILD_NUMBER} \$JENKINS_CONTAINER 2>/dev/null || true
 
-                    # Retry until HTTP 200 or timeout (15 × 3 s = 45 s max)
-                    STATUS=000
+                    # Retry curl by container name (not localhost)
+                    STATUS="000"
                     COUNT=0
                     RETRIES=15
                     until [ "\$STATUS" = "200" ] || [ "\$COUNT" -ge "\$RETRIES" ]; do
                         sleep 3
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:\$TEST_PORT/ 2>/dev/null || echo "000")
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://test-calc-${BUILD_NUMBER}:80/ 2>/dev/null)
                         COUNT=\$((COUNT+1))
                         echo "Attempt \$COUNT/\$RETRIES — HTTP \$STATUS"
                     done
 
-                    # Always remove the test container
+                    # Disconnect Jenkins from the test network
+                    docker network disconnect test-net-${BUILD_NUMBER} \$JENKINS_CONTAINER 2>/dev/null || true
+
+                    # Clean up test container and network
                     docker rm -f test-calc-${BUILD_NUMBER} 2>/dev/null || true
+                    docker network rm test-net-${BUILD_NUMBER} 2>/dev/null || true
 
                     if [ "\$STATUS" != "200" ]; then
                         echo "❌ Smoke test FAILED — HTTP \$STATUS"
@@ -100,10 +107,8 @@ pipeline {
             steps {
                 echo "🚀 Deploying ${IMAGE_NAME}:${IMAGE_TAG} on port ${APP_PORT}..."
                 sh """
-                    # Stop and remove old production container if running
                     docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
-                    # Run the new container
                     docker run -d \\
                         --name ${CONTAINER_NAME} \\
                         --restart unless-stopped \\
@@ -117,25 +122,31 @@ pipeline {
         }
 
         // ─── 6. HEALTH CHECK ────────────────────────────────────────────
+        // Same fix: Jenkins is inside Docker, so connect to the app container's network.
         stage('Health Check') {
             steps {
                 echo '❤️  Running post-deploy health check...'
                 sh """
-                    STATUS=000
+                    # Connect Jenkins container to the calculator app's network
+                    JENKINS_CONTAINER=\$(hostname)
+                    docker network connect bridge \$JENKINS_CONTAINER 2>/dev/null || true
+
+                    STATUS="000"
                     COUNT=0
                     RETRIES=15
                     until [ "\$STATUS" = "200" ] || [ "\$COUNT" -ge "\$RETRIES" ]; do
                         sleep 3
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ 2>/dev/null || echo "000")
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://${CONTAINER_NAME}:80/ 2>/dev/null)
                         COUNT=\$((COUNT+1))
                         echo "Attempt \$COUNT/\$RETRIES — HTTP \$STATUS"
                     done
+
                     if [ "\$STATUS" != "200" ]; then
                         echo "❌ Health check FAILED"
                         docker logs ${CONTAINER_NAME}
                         exit 1
                     fi
-                    echo "✅ App is healthy at http://localhost:${APP_PORT}"
+                    echo "✅ App is healthy!"
                 """
             }
         }
@@ -163,7 +174,8 @@ pipeline {
             echo '❌ Pipeline FAILED — check logs above'
             sh """
                 docker rm -f test-calc-${BUILD_NUMBER} 2>/dev/null || true
-                docker rm -f ${CONTAINER_NAME}         2>/dev/null || true
+                docker network rm test-net-${BUILD_NUMBER} 2>/dev/null || true
+                docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
             """
         }
         always {
