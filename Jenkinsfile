@@ -69,12 +69,16 @@ pipeline {
                         -p 3001:80 \
                         ${IMAGE_NAME}:${IMAGE_TAG}
 
-                    # Give nginx time to start
-                    sleep 5
-
-                    # Smoke test: check HTTP 200
-                    STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/)
-                    echo "HTTP Status: \$STATUS"
+                    # Wait for nginx to be ready (retry up to 15 times)
+                    STATUS=000
+                    RETRIES=15
+                    COUNT=0
+                    until [ "\$STATUS" = "200" ] || [ "\$COUNT" -ge "\$RETRIES" ]; do
+                        sleep 3
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/ 2>/dev/null || echo "000")
+                        COUNT=\$((COUNT+1))
+                        echo "Attempt \$COUNT/\$RETRIES — HTTP \$STATUS"
+                    done
 
                     # Clean up test container
                     docker stop test-calc-${BUILD_NUMBER} && docker rm test-calc-${BUILD_NUMBER}
@@ -140,9 +144,15 @@ pipeline {
             steps {
                 echo '❤️  Running post-deploy health check...'
                 sh """
-                    sleep 5
-                    STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/)
-                    echo "App health: HTTP \$STATUS"
+                    STATUS=000
+                    RETRIES=15
+                    COUNT=0
+                    until [ "\$STATUS" = "200" ] || [ "\$COUNT" -ge "\$RETRIES" ]; do
+                        sleep 3
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ 2>/dev/null || echo "000")
+                        COUNT=\$((COUNT+1))
+                        echo "Attempt \$COUNT/\$RETRIES — HTTP \$STATUS"
+                    done
                     if [ "\$STATUS" != "200" ]; then
                         echo "❌ Health check FAILED"
                         docker logs ${CONTAINER_NAME}
