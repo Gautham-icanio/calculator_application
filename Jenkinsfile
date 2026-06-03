@@ -2,13 +2,10 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME    = "calculator-app"
-        IMAGE_TAG     = "${BUILD_NUMBER}"
+        IMAGE_NAME     = "calculator-app"
+        IMAGE_TAG      = "${BUILD_NUMBER}"
         CONTAINER_NAME = "calculator"
-        APP_PORT      = "3000"
-        // If pushing to Docker Hub, set these in Jenkins credentials:
-        // DOCKER_HUB_REPO = "yourdockerhubuser/calculator-app"
-        // DOCKER_CREDENTIALS_ID = "dockerhub-creds"
+        APP_PORT       = "3000"
     }
 
     options {
@@ -23,12 +20,10 @@ pipeline {
             steps {
                 echo '📥 Cloning repository...'
                 checkout scm
-                // If using a specific repo:
-                // git branch: 'main', url: 'https://github.com/youruser/calculator-app.git'
             }
         }
 
-        // ─── 2. LINT / VALIDATE ─────────────────────────────────────────
+        // ─── 2. VALIDATE ────────────────────────────────────────────────
         stage('Validate') {
             steps {
                 echo '🔍 Validating project files...'
@@ -36,10 +31,9 @@ pipeline {
                     echo "--- Files in workspace ---"
                     ls -la
                     echo ""
-                    echo "--- Checking Dockerfile exists ---"
+                    echo "--- Checking Dockerfile ---"
                     test -f Dockerfile && echo "✅ Dockerfile found" || (echo "❌ Dockerfile missing" && exit 1)
-                    echo ""
-                    echo "--- Checking index.html exists ---"
+                    echo "--- Checking index.html ---"
                     test -f index.html && echo "✅ index.html found" || (echo "❌ index.html missing" && exit 1)
                 '''
             }
@@ -50,40 +44,48 @@ pipeline {
             steps {
                 echo "🐳 Building Docker image: ${IMAGE_NAME}:${IMAGE_TAG}"
                 sh """
-                    docker build \
-                        --no-cache \
-                        -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                        -t ${IMAGE_NAME}:latest \
+                    docker build \\
+                        --no-cache \\
+                        -t ${IMAGE_NAME}:${IMAGE_TAG} \\
+                        -t ${IMAGE_NAME}:latest \\
                         .
                 """
             }
         }
 
-        // ─── 4. TEST ────────────────────────────────────────────────────
+        // ─── 4. TEST (random port — no conflicts) ───────────────────────
         stage('Test') {
             steps {
                 echo '🧪 Running container smoke test...'
                 sh """
-                    # Start a temporary container
-                    docker run -d --name test-calc-${BUILD_NUMBER} \
-                        -p 3001:80 \
+                    # Remove any leftover test container from a previous failed run
+                    docker rm -f test-calc-${BUILD_NUMBER} 2>/dev/null || true
+
+                    # -P lets Docker pick a free ephemeral port — never conflicts
+                    docker run -d --name test-calc-${BUILD_NUMBER} \\
+                        -P \\
                         ${IMAGE_NAME}:${IMAGE_TAG}
 
-                    # Wait for nginx to be ready (retry up to 15 times)
+                    # Discover which host port was assigned to container port 80
+                    TEST_PORT=\$(docker inspect \\
+                        --format='{{(index (index .NetworkSettings.Ports "80/tcp") 0).HostPort}}' \\
+                        test-calc-${BUILD_NUMBER})
+                    echo "Test container listening on host port: \$TEST_PORT"
+
+                    # Retry until HTTP 200 or timeout (15 × 3 s = 45 s max)
                     STATUS=000
-                    RETRIES=15
                     COUNT=0
+                    RETRIES=15
                     until [ "\$STATUS" = "200" ] || [ "\$COUNT" -ge "\$RETRIES" ]; do
                         sleep 3
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/ 2>/dev/null || echo "000")
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:\$TEST_PORT/ 2>/dev/null || echo "000")
                         COUNT=\$((COUNT+1))
                         echo "Attempt \$COUNT/\$RETRIES — HTTP \$STATUS"
                     done
 
-                    # Clean up test container
-                    docker stop test-calc-${BUILD_NUMBER} && docker rm test-calc-${BUILD_NUMBER}
+                    # Always remove the test container
+                    docker rm -f test-calc-${BUILD_NUMBER} 2>/dev/null || true
 
-                    # Assert status code
                     if [ "\$STATUS" != "200" ]; then
                         echo "❌ Smoke test FAILED — HTTP \$STATUS"
                         exit 1
@@ -93,44 +95,19 @@ pipeline {
             }
         }
 
-        // ─── 5. PUSH TO REGISTRY (Optional) ────────────────────────────
-        // Uncomment this stage if you want to push to Docker Hub
-        /*
-        stage('Push to Docker Hub') {
-            steps {
-                echo '📤 Pushing image to Docker Hub...'
-                withCredentials([usernamePassword(
-                    credentialsId: "${DOCKER_CREDENTIALS_ID}",
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh """
-                        echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
-                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_HUB_REPO}:${IMAGE_TAG}
-                        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${DOCKER_HUB_REPO}:latest
-                        docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
-                        docker push ${DOCKER_HUB_REPO}:latest
-                        docker logout
-                    """
-                }
-            }
-        }
-        */
-
-        // ─── 6. DEPLOY ──────────────────────────────────────────────────
+        // ─── 5. DEPLOY ──────────────────────────────────────────────────
         stage('Deploy') {
             steps {
                 echo "🚀 Deploying ${IMAGE_NAME}:${IMAGE_TAG} on port ${APP_PORT}..."
                 sh """
-                    # Stop and remove old container if running
-                    docker stop ${CONTAINER_NAME} 2>/dev/null || true
-                    docker rm   ${CONTAINER_NAME} 2>/dev/null || true
+                    # Stop and remove old production container if running
+                    docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
                     # Run the new container
-                    docker run -d \
-                        --name ${CONTAINER_NAME} \
-                        --restart unless-stopped \
-                        -p ${APP_PORT}:80 \
+                    docker run -d \\
+                        --name ${CONTAINER_NAME} \\
+                        --restart unless-stopped \\
+                        -p ${APP_PORT}:80 \\
                         ${IMAGE_NAME}:${IMAGE_TAG}
 
                     echo "✅ Container started"
@@ -139,14 +116,14 @@ pipeline {
             }
         }
 
-        // ─── 7. HEALTH CHECK ────────────────────────────────────────────
+        // ─── 6. HEALTH CHECK ────────────────────────────────────────────
         stage('Health Check') {
             steps {
                 echo '❤️  Running post-deploy health check...'
                 sh """
                     STATUS=000
-                    RETRIES=15
                     COUNT=0
+                    RETRIES=15
                     until [ "\$STATUS" = "200" ] || [ "\$COUNT" -ge "\$RETRIES" ]; do
                         sleep 3
                         STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${APP_PORT}/ 2>/dev/null || echo "000")
@@ -163,7 +140,7 @@ pipeline {
             }
         }
 
-        // ─── 8. CLEANUP OLD IMAGES ──────────────────────────────────────
+        // ─── 7. CLEANUP OLD IMAGES ──────────────────────────────────────
         stage('Cleanup') {
             steps {
                 echo '🧹 Removing dangling images...'
@@ -185,8 +162,8 @@ pipeline {
         failure {
             echo '❌ Pipeline FAILED — check logs above'
             sh """
-                docker stop ${CONTAINER_NAME}  2>/dev/null || true
-                docker rm   ${CONTAINER_NAME}  2>/dev/null || true
+                docker rm -f test-calc-${BUILD_NUMBER} 2>/dev/null || true
+                docker rm -f ${CONTAINER_NAME}         2>/dev/null || true
             """
         }
         always {
