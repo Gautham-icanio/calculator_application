@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+
+  # ── Jenkins CI/CD Server ─────────────────────────────────────────────
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    restart: unless-stopped
+    privileged: true
+    user: root
+    ports:
+      - "8080:8080"       # Jenkins Web UI
+      - "50000:50000"     # Agent port
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock   # Docker-in-Docker
+      - /usr/bin/docker:/usr/bin/docker             # Docker CLI
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=true
+    networks:
+      - devops_net
+
+  # ── Calculator App (deployed by Jenkins) ─────────────────────────────
+  # This service is managed by Jenkins pipeline.
+  # It will be started automatically after a successful Jenkins build.
+  # You can also start it manually for testing:
+  calculator:
+    image: calculator-app:latest       # Built by Jenkins
+    container_name: calculator
+    restart: unless-stopped
+    ports:
+      - "3000:80"          # App available at http://localhost:3000
+    networks:
+      - devops_net
+    depends_on:
+      - jenkins
+    profiles:
+      - app                # Only start with: docker compose --profile app up
+
+volumes:
+  jenkins_home:
+    driver: local
+
+networks:
+  devops_net:
+    driver: bridge

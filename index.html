@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Calc</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --panel: #111118;
+      --border: #1e1e2e;
+      --accent: #00f5c4;
+      --accent2: #ff4d6d;
+      --text: #e8e8f0;
+      --muted: #44445a;
+      --btn-bg: #16161f;
+      --btn-hover: #1e1e2c;
+      --btn-active: #252538;
+      --glow: 0 0 20px rgba(0,245,196,0.25);
+    }
+
+    body {
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Rajdhani', sans-serif;
+      overflow: hidden;
+    }
+
+    /* Background grid */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,245,196,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,245,196,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    .calc-wrapper {
+      position: relative;
+      animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) both;
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(30px) scale(0.95); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .calc {
+      width: 320px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow:
+        0 40px 80px rgba(0,0,0,0.6),
+        0 0 0 1px rgba(0,245,196,0.08),
+        inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .brand {
+      font-size: 11px;
+      letter-spacing: 4px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .status-dot {
+      width: 6px; height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* Display */
+    .display {
+      background: #0d0d14;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      min-height: 90px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+      overflow: hidden;
+    }
+    .display::after {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.4;
+    }
+    .expression {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 1px;
+      min-height: 16px;
+      text-align: right;
+      transition: all 0.2s;
+    }
+    .result {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 36px;
+      color: var(--text);
+      text-align: right;
+      letter-spacing: -1px;
+      transition: all 0.15s;
+      word-break: break-all;
+    }
+    .result.accent { color: var(--accent); text-shadow: var(--glow); }
+    .result.error  { color: var(--accent2); font-size: 18px; }
+
+    /* Grid */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    /* Buttons */
+    button {
+      font-family: 'Rajdhani', sans-serif;
+      font-weight: 500;
+      font-size: 16px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--btn-bg);
+      color: var(--text);
+      height: 58px;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, transform 0.08s, box-shadow 0.12s;
+      position: relative;
+      overflow: hidden;
+      letter-spacing: 0.5px;
+    }
+    button:hover  { background: var(--btn-hover); border-color: #2a2a3e; }
+    button:active { background: var(--btn-active); transform: scale(0.94); }
+
+    /* Ripple */
+    button::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, rgba(0,245,196,0.15) 0%, transparent 70%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    button:active::after { opacity: 1; }
+
+    /* Spans */
+    .span2 { grid-column: span 2; }
+
+    /* Types */
+    .op {
+      color: var(--accent);
+      border-color: rgba(0,245,196,0.15);
+      background: rgba(0,245,196,0.05);
+    }
+    .op:hover { background: rgba(0,245,196,0.1); border-color: rgba(0,245,196,0.3); }
+
+    .fn {
+      color: #a0a0c0;
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+
+    .eq {
+      background: var(--accent);
+      color: #0a0a0f;
+      font-weight: 700;
+      font-size: 20px;
+      border-color: var(--accent);
+      box-shadow: 0 4px 20px rgba(0,245,196,0.3);
+    }
+    .eq:hover  { background: #00ddb0; box-shadow: 0 4px 30px rgba(0,245,196,0.5); }
+    .eq:active { background: #00c49d; transform: scale(0.94); }
+
+    .clr {
+      color: var(--accent2);
+      border-color: rgba(255,77,109,0.2);
+      background: rgba(255,77,109,0.05);
+    }
+    .clr:hover { background: rgba(255,77,109,0.1); border-color: rgba(255,77,109,0.3); }
+
+    .zero { font-size: 18px; }
+
+    /* History pill */
+    .history-bar {
+      margin-top: 16px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 1px;
+      text-align: center;
+      min-height: 14px;
+    }
+  </style>
+</head>
+<body>
+<div class="calc-wrapper">
+  <div class="calc">
+    <div class="header">
+      <span class="brand">CALC — v2.0</span>
+      <span class="status-dot"></span>
+    </div>
+
+    <div class="display">
+      <div class="expression" id="expr"></div>
+      <div class="result" id="result">0</div>
+    </div>
+
+    <div class="grid">
+      <!-- Row 1 -->
+      <button class="fn clr" onclick="clearAll()">AC</button>
+      <button class="fn" onclick="toggleSign()">+/−</button>
+      <button class="fn" onclick="percent()">%</button>
+      <button class="op" onclick="op('/')">÷</button>
+      <!-- Row 2 -->
+      <button onclick="num('7')">7</button>
+      <button onclick="num('8')">8</button>
+      <button onclick="num('9')">9</button>
+      <button class="op" onclick="op('*')">×</button>
+      <!-- Row 3 -->
+      <button onclick="num('4')">4</button>
+      <button onclick="num('5')">5</button>
+      <button onclick="num('6')">6</button>
+      <button class="op" onclick="op('-')">−</button>
+      <!-- Row 4 -->
+      <button onclick="num('1')">1</button>
+      <button onclick="num('2')">2</button>
+      <button onclick="num('3')">3</button>
+      <button class="op" onclick="op('+')">+</button>
+      <!-- Row 5 -->
+      <button class="span2 zero" onclick="num('0')">0</button>
+      <button onclick="dot()">.</button>
+      <button class="eq" onclick="equals()">=</button>
+    </div>
+
+    <div class="history-bar" id="history"></div>
+  </div>
+</div>
+
+<script>
+  let cur = '0', prev = '', operator = '', justEvaled = false;
+  const R = document.getElementById('result');
+  const E = document.getElementById('expr');
+  const H = document.getElementById('history');
+
+  function display(val, type='') {
+    R.className = 'result' + (type ? ' ' + type : '');
+    R.textContent = val;
+  }
+
+  function num(d) {
+    if (justEvaled) { cur = d; justEvaled = false; }
+    else cur = cur === '0' ? d : cur.length < 12 ? cur + d : cur;
+    display(cur);
+    updateExpr();
+  }
+
+  function dot() {
+    if (justEvaled) { cur = '0.'; justEvaled = false; }
+    else if (!cur.includes('.')) cur += '.';
+    display(cur);
+  }
+
+  function op(o) {
+    if (prev && !justEvaled) compute(false);
+    prev = cur; operator = o; justEvaled = false;
+    const sym = {'+':'+','-':'−','*':'×','/':'÷'}[o];
+    E.textContent = prev + ' ' + sym;
+    cur = '0';
+  }
+
+  function compute(final=true) {
+    if (!prev || !operator) return;
+    const a = parseFloat(prev), b = parseFloat(cur);
+    const sym = {'+':'+','-':'−','*':'×','/':'÷'}[operator];
+    let res;
+    try {
+      if (operator==='/' && b===0) throw new Error('ERR: DIV/0');
+      if (operator==='+') res = a+b;
+      else if (operator==='-') res = a-b;
+      else if (operator==='*') res = a*b;
+      else res = a/b;
+      res = parseFloat(res.toPrecision(10));
+      if (final) {
+        H.textContent = `${a} ${sym} ${b} = ${res}`;
+        E.textContent = `${prev} ${sym} ${cur} =`;
+        display(String(res), 'accent');
+        cur = String(res); prev = ''; operator = ''; justEvaled = true;
+      } else {
+        cur = String(res);
+      }
+    } catch(err) {
+      display(err.message, 'error');
+      cur = '0'; prev = ''; operator = ''; justEvaled = true;
+    }
+  }
+
+  function equals() { compute(true); }
+
+  function clearAll() {
+    cur = '0'; prev = ''; operator = ''; justEvaled = false;
+    display('0'); E.textContent = ''; H.textContent = '';
+  }
+
+  function toggleSign() {
+    cur = String(parseFloat(cur) * -1);
+    display(cur);
+  }
+
+  function percent() {
+    cur = String(parseFloat(cur) / 100);
+    display(cur);
+  }
+
+  function updateExpr() {
+    if (operator) {
+      const sym = {'+':'+','-':'−','*':'×','/':'÷'}[operator];
+      E.textContent = prev + ' ' + sym + ' ' + cur;
+    }
+  }
+
+  // Keyboard support
+  document.addEventListener('keydown', e => {
+    if (e.key>='0'&&e.key<='9') num(e.key);
+    else if (e.key==='.') dot();
+    else if (['+','-','*','/'].includes(e.key)) op(e.key);
+    else if (e.key==='Enter'||e.key==='=') equals();
+    else if (e.key==='Escape') clearAll();
+    else if (e.key==='Backspace') {
+      cur = cur.length>1 ? cur.slice(0,-1) : '0';
+      display(cur);
+    }
+  });
+</script>
+</body>
+</html>
