@@ -4,7 +4,7 @@ pipeline {
     environment {
         IMAGE_NAME     = "calculator-app"
         CONTAINER_NAME = "calculator"
-        APP_PORT       = "3030"
+        APP_PORT       = "3330"
     }
 
     stages {
